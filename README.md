@@ -8,7 +8,7 @@ Automatically correct Goethe Uni EPI Python hand-ins for style and author requir
 
 - `python3` must be in PATH
 
-- [autopep8](https://pypi.org/project/autopep8) must be installed and accessible to python3
+- `python3 -m pip install ruff` (module must be accessible to python3)
 
 ## Running
 `templ generate && go run .`

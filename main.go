@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,45 @@ import (
 )
 
 var reAuthor = regexp.MustCompile(`__author__ = "[0-9]+, \\w+"`)
+
+// Pos is a Position in source code.
+type Pos struct {
+	File string
+	Ln   int
+	Col  int
+}
+
+type RuffLinterResult struct {
+	//Cell        interface{} `json:"cell"`
+	Code        string `json:"code"`
+	EndLocation struct {
+		Column int `json:"column"`
+		Row    int `json:"row"`
+	} `json:"end_location"`
+	Filename string `json:"filename"`
+	Fix      *struct {
+		Applicability string `json:"applicability"`
+		Edits         []struct {
+			Content     string `json:"content"`
+			EndLocation struct {
+				Column int `json:"column"`
+				Row    int `json:"row"`
+			} `json:"end_location"`
+			Location struct {
+				Column int `json:"column"`
+				Row    int `json:"row"`
+			} `json:"location"`
+		} `json:"edits"`
+		Message string `json:"message"`
+	} `json:"fix,omitempty"`
+	Location struct {
+		Column int `json:"column"`
+		Row    int `json:"row"`
+	} `json:"location"`
+	Message string `json:"message"`
+	NoqaRow int    `json:"noqa_row"`
+	URL     string `json:"url"`
+}
 
 func main() {
 	component := tp.Index("GU EPI Autocorrector")
@@ -57,8 +97,10 @@ func main() {
 			fmt.Println(err)
 		}
 
-		var bOut bytes.Buffer
-		zipWr := zip.NewWriter(&bOut)
+		var linterOut bytes.Buffer
+
+		var zipOut bytes.Buffer
+		zipWr := zip.NewWriter(&zipOut)
 
 		for _, f := range zipRd.File {
 			if !strings.HasSuffix(f.Name, ".py") {
@@ -96,12 +138,36 @@ func main() {
 					return err
 				}
 
-				cmd := exec.Command("python3", "-m", "autopep8", "-a", "-a", "-")
-				cmd.Stdin = bytes.NewReader(b)
-				cmd.Stdout = wr
-				if err := cmd.Run(); err != nil {
-					return err
+				//linterFoundSomething := false
+				var linterRes []RuffLinterResult
+				{
+					linterOut.Reset()
+					cmd := exec.Command(
+						"python3", "-m", "ruff", "check",
+						"--output-format=json",
+						"-",
+						"--select=F,E,W,N,D,I",
+						"--ignore=D211,D213",
+						"--fix",
+						//"--ignore=E0401",
+					)
+					cmd.Stdin = bytes.NewReader(b)
+					cmd.Stdout = wr
+					cmd.Stderr = &linterOut
+					if err := cmd.Run(); err != nil {
+						if ee, ok := err.(*exec.ExitError); ok &&
+							ee.ExitCode() == 1 {
+							//linterFoundSomething = true
+						} else {
+							return err
+						}
+					}
+
+					if err := json.Unmarshal(linterOut.Bytes(), &linterRes); err != nil {
+						return err
+					}
 				}
+				fmt.Println(linterRes)
 
 				return nil
 			}(); err != nil {
@@ -115,7 +181,7 @@ func main() {
 
 		w.Header().Add("Content-Disposition", "attachment; filename="+sanitizedOutFileName.String())
 
-		if _, err := io.Copy(w, &bOut); err != nil {
+		if _, err := io.Copy(w, &zipOut); err != nil {
 			fmt.Println(err)
 		}
 	}))
