@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -10,10 +9,15 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
+	"github.com/alecthomas/chroma/v2"
+	"github.com/alecthomas/chroma/v2/formatters/html"
+	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v2/styles"
 )
 
 var reAuthor = regexp.MustCompile(`__author__ = "[0-9]+, \\w+"`)
@@ -25,11 +29,12 @@ type Location struct {
 }
 
 type LinterResult struct {
-	Code        string
-	Location    Location
-	EndLocation Location
-	Message     string
-	URL         string
+	Code            string
+	Location        Location
+	EndLocation     Location
+	Message         string
+	URL             string
+	ContextCodeHTML string
 }
 
 // Result item returned by ruff's linter
@@ -98,17 +103,11 @@ func processZip(out io.Writer, in []byte) (map[string][]LinterResult, error) {
 		if f.Mode().IsRegular() && strings.HasSuffix(f.Name, ".py") {
 			var fLintRes []LinterResult
 
-			sc := bufio.NewScanner(bytes.NewReader(fB.Bytes()))
-			hasAuthor := false
-			for sc.Scan() {
-				if reAuthor.MatchString(sc.Text()) {
-					hasAuthor = true
-				}
-			}
-			if err := sc.Err(); err != nil {
-				return err
-			}
-			if !hasAuthor {
+			fLines := strings.Split(fB.String(), "\n")
+
+			if !slices.ContainsFunc(fLines, func(ln string) bool {
+				return reAuthor.MatchString(ln)
+			}) {
 				fLintRes = append(fLintRes, LinterResult{
 					Location:    Location{1, 1},
 					EndLocation: Location{1, 1},
@@ -152,6 +151,36 @@ func processZip(out io.Writer, in []byte) (map[string][]LinterResult, error) {
 				}
 			}
 
+			for i := range fLintRes {
+				var contextCodeHTML bytes.Buffer
+				{
+					var code strings.Builder
+					startRow := max(fLintRes[i].Location.Row-5-1, 0)
+					endRow := min(fLintRes[i].EndLocation.Row+5, len(fLines))
+					for i := startRow; i < endRow; i++ {
+						code.WriteString(fLines[i])
+						code.WriteRune('\n')
+					}
+
+					codeFormatter := html.New(
+						html.WithClasses(true),
+						html.HighlightLines([][2]int{
+							{fLintRes[i].Location.Row - startRow, fLintRes[i].EndLocation.Row - startRow},
+						}),
+					)
+
+					lex := lexers.Get("python")
+					it, err := lex.Tokenise(nil, code.String())
+					if err != nil {
+						return err
+					}
+					if err := codeFormatter.Format(&contextCodeHTML, styles.Get("monokai"), it); err != nil {
+						return err
+					}
+				}
+				fLintRes[i].ContextCodeHTML = contextCodeHTML.String()
+			}
+
 			linterRes[f.Name] = fLintRes
 		} else {
 			if _, err := wr.Write(fB.Bytes()); err != nil {
@@ -171,7 +200,24 @@ func processZip(out io.Writer, in []byte) (map[string][]LinterResult, error) {
 func main() {
 	title := "GU EPI Autocorrector"
 
-	http.Handle("/", templ.Handler(TplHtmlDoc(TplUploadForm(), title)))
+	var htmlCodeFormatterCSS strings.Builder
+	{
+		style, err := styles.Get("monokai").
+			Builder().
+			AddEntry(chroma.LineHighlight, chroma.StyleEntry{
+				Background: chroma.ParseColour("#661515"),
+			}).
+			Build()
+		if err != nil {
+			panic(err)
+		}
+		htmlCodeFormatter := html.New(html.WithClasses(true))
+		if err := htmlCodeFormatter.WriteCSS(&htmlCodeFormatterCSS, style); err != nil {
+			panic(err)
+		}
+	}
+
+	http.Handle("/", templ.Handler(TplHtmlDoc(TplUploadForm(), title, nil)))
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 	http.Handle("/upload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") ||
@@ -183,6 +229,7 @@ func main() {
 		file, fileHdr, err := r.FormFile("file")
 		if err != nil {
 			fmt.Println(err)
+			return
 		}
 
 		outFileName := strings.TrimSuffix(fileHdr.Filename, ".zip") + "_out.zip"
@@ -190,12 +237,14 @@ func main() {
 		bIn, err := io.ReadAll(file)
 		if err != nil {
 			fmt.Println(err)
+			return
 		}
 
 		var bOut bytes.Buffer
 		lintRes, err := processZip(&bOut, bIn)
 		if err != nil {
 			fmt.Println(err)
+			return
 		}
 
 		if len(lintRes) == 0 {
@@ -203,10 +252,16 @@ func main() {
 			w.Header().Add("Content-Length", strconv.Itoa(bOut.Len()))
 			if _, err := w.Write(bOut.Bytes()); err != nil {
 				fmt.Println(err)
+				return
 			}
 		} else {
-			if err := TplHtmlDoc(TplLintResults(lintRes), title).Render(r.Context(), w); err != nil {
+			if err := TplHtmlDoc(
+				TplLintResults(lintRes),
+				title,
+				[]string{htmlCodeFormatterCSS.String()},
+			).Render(r.Context(), w); err != nil {
 				fmt.Println(err)
+				return
 			}
 		}
 	}))

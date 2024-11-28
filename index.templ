@@ -30,7 +30,7 @@ func sortedMapAll[Map ~map[K]V, K cmp.Ordered, V any](m Map) iter.Seq2[K, V] {
 	}
 }
 
-templ TplHtmlDoc(content templ.Component, title string) {
+templ TplHtmlDoc(content templ.Component, title string, additionalCSS []string) {
 	<!DOCTYPE html>
 	<html lang="en">
 	<head>
@@ -41,8 +41,11 @@ templ TplHtmlDoc(content templ.Component, title string) {
 		<link rel="stylesheet" href="/static/style.css">
 	</head>
 		<body>
-		@content
-		<script src="https://unpkg.com/htmx.org@2.0.3"></script>
+			@content
+			<script src="https://unpkg.com/htmx.org@2.0.3"></script>
+			for _, css := range additionalCSS {
+				@templ.Raw("<style>"+css+"</style>")
+			}
 		</body>
 	</html>
 }
@@ -51,11 +54,18 @@ templ TplLintResults(lintResults map[string][]LinterResult) {
 	<ul>
 		for fName, lr := range sortedMapAll(lintResults) {
 			<li>
-				<h4 class="mono">{ fName }</h4>
+				<p class="mono" style="margin: 5pt 0 5pt 0">{ fName }</p>
 				for _, r := range lr {
-					{ firstToUpper(r.Message) } ({ r.Code })
-					<span class="unemph">[{ fmt.Sprintf("Line %v, Col %v", r.Location.Row, r.Location.Column) }]</span>
-					<br>
+					<details style="margin: 2pt 0 2pt 0">
+						<summary>
+							{ firstToUpper(r.Message) }
+							if r.Code != "" {
+								({ r.Code })
+							}
+							<span class="unemph">[{ fmt.Sprintf("Line %v, Col %v", r.Location.Row, r.Location.Column) }]</span><br>
+						</summary>
+						@templ.Raw(r.ContextCodeHTML)
+					</details>
 				}
 			</li>
 		}
