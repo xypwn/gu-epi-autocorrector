@@ -20,7 +20,7 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 )
 
-var reAuthor = regexp.MustCompile(`__author__ = "[0-9]+, \\w+"`)
+var reAuthor = regexp.MustCompile(`__author__ = "[0-9]+, \w+"`)
 
 // Location in source code
 type Location struct {
