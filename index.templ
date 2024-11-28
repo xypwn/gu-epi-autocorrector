@@ -1,6 +1,34 @@
 package main
 
-import "fmt"
+import (
+	"cmp"
+	"fmt"
+	"iter"
+	"slices"
+	"strings"
+)
+
+func firstToUpper(s string) string {
+	if len(s) < 1 {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func sortedMapAll[Map ~map[K]V, K cmp.Ordered, V any](m Map) iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		ks := make([]K, 0, len(m))
+		for k := range m {
+			ks = append(ks, k)
+		}
+		slices.Sort(ks)
+		for _, k := range ks {
+			if !yield(k, m[k]) {
+				return
+			}
+		}
+	}
+}
 
 templ TplHtmlDoc(content templ.Component, title string) {
 	<!DOCTYPE html>
@@ -15,41 +43,39 @@ templ TplHtmlDoc(content templ.Component, title string) {
 		<body>
 		@content
 		<script src="https://unpkg.com/htmx.org@2.0.3"></script>
-		<script>
-			elemUploadFormFile = document.getElementById("upload-form-file");
-			elemUploadForm = document.getElementById("upload-form");
-			elemUploadFormFile.onchange = function() {
-				elemUploadForm.submit();
-				elemUploadFormFile.value = '';
-			}
-		</script>
 		</body>
 	</html>
 }
 
-templ TplLintResults(lintResults map[string][]RuffLinterResult) {
+templ TplLintResults(lintResults map[string][]LinterResult) {
 	<ul>
-		for fName, lr := range lintResults {
+		for fName, lr := range sortedMapAll(lintResults) {
 			<li>
-				<h4>{ fName }</h4>
+				<h4 class="mono">{ fName }</h4>
 				for _, r := range lr {
-					{ fmt.Sprintf("%v: %v: %v", r.Location.Row, r.Location.Column, r.Message) }<br>
+					{ firstToUpper(r.Message) } ({ r.Code })
+					<span class="unemph">[{ fmt.Sprintf("Line %v, Col %v", r.Location.Row, r.Location.Column) }]</span>
+					<br>
 				}
 			</li>
 		}
 	</ul>
 }
 
-templ TplIndex() {
+templ TplUploadForm() {
 	<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-		<label for="upload-form-num">Student Number:</label>
-		<input id="upload-form-num" type="text">
-		<label for="upload-form-name">Last Name:</label>
-		<input id="upload-form-name" type="text">
 		<label for="upload-form-file">File:</label>
 		<input id="upload-form-file" type="file" name="file" accept=".zip"><br><br>
 		<noscript>
 			<button type="submit">Submit</button>
 		</noscript>
 	</form>
+	<script>
+		elemUploadFormFile = document.getElementById("upload-form-file");
+		elemUploadForm = document.getElementById("upload-form");
+		elemUploadFormFile.onchange = function() {
+			elemUploadForm.submit();
+			elemUploadFormFile.value = '';
+		}
+	</script>
 }
