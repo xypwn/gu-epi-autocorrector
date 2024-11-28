@@ -1,0 +1,55 @@
+package main
+
+import "fmt"
+
+templ TplHtmlDoc(content templ.Component, title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta http-equiv="X-UA-Compatible" content="ie=edge">
+		<title>{title}</title>
+		<link rel="stylesheet" href="/static/style.css">
+	</head>
+		<body>
+		@content
+		<script src="https://unpkg.com/htmx.org@2.0.3"></script>
+		<script>
+			elemUploadFormFile = document.getElementById("upload-form-file");
+			elemUploadForm = document.getElementById("upload-form");
+			elemUploadFormFile.onchange = function() {
+				elemUploadForm.submit();
+				elemUploadFormFile.value = '';
+			}
+		</script>
+		</body>
+	</html>
+}
+
+templ TplLintResults(lintResults map[string][]RuffLinterResult) {
+	<ul>
+		for fName, lr := range lintResults {
+			<li>
+				<h4>{ fName }</h4>
+				for _, r := range lr {
+					{ fmt.Sprintf("%v: %v: %v", r.Location.Row, r.Location.Column, r.Message) }<br>
+				}
+			</li>
+		}
+	</ul>
+}
+
+templ TplIndex() {
+	<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+		<label for="upload-form-num">Student Number:</label>
+		<input id="upload-form-num" type="text">
+		<label for="upload-form-name">Last Name:</label>
+		<input id="upload-form-name" type="text">
+		<label for="upload-form-file">File:</label>
+		<input id="upload-form-file" type="file" name="file" accept=".zip"><br><br>
+		<noscript>
+			<button type="submit">Submit</button>
+		</noscript>
+	</form>
+}
