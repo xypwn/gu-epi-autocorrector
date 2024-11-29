@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -83,6 +84,7 @@ func processZip(out io.Writer, in []byte) (map[string][]LinterResult, error) {
 	var fB bytes.Buffer
 	var linterOut bytes.Buffer
 	zipWr := zip.NewWriter(out)
+	defer zipWr.Close()
 	processFile := func(f *zip.File) error {
 		fB.Reset()
 		{
@@ -105,14 +107,60 @@ func processZip(out io.Writer, in []byte) (map[string][]LinterResult, error) {
 
 			fLines := strings.Split(fB.String(), "\n")
 
-			if !slices.ContainsFunc(fLines, func(ln string) bool {
-				return reAuthor.MatchString(ln)
-			}) {
-				fLintRes = append(fLintRes, LinterResult{
-					Location:    Location{1, 1},
-					EndLocation: Location{1, 1},
-					Message:     "missing __author__ line",
-				})
+			{
+				var docStrBorder string
+				inDocstr := false
+				pastDocstr := false
+				hasAuthor := false
+				for i, ln := range fLines {
+					if !pastDocstr {
+						if inDocstr {
+							if strings.Count(ln, docStrBorder)%2 == 1 {
+								pastDocstr = true
+								inDocstr = false
+							}
+						} else {
+							if strings.Contains(ln, `"""`) {
+								docStrBorder = `"""`
+							} else if strings.Contains(ln, `'''`) {
+								docStrBorder = `'''`
+							}
+							cnt := strings.Count(ln, docStrBorder)
+							if cnt > 0 {
+								if cnt%2 == 0 {
+									pastDocstr = true
+								} else {
+									inDocstr = true
+								}
+							}
+						}
+					}
+					if strings.HasPrefix(ln, "__author__") {
+						hasAuthor = true
+						if reAuthor.MatchString(ln) {
+							if !pastDocstr {
+								fLintRes = append(fLintRes, LinterResult{
+									Location:    Location{1, i + 1},
+									EndLocation: Location{len(ln), i + 1},
+									Message:     "__author__ line before module docstring (should come after)",
+								})
+							}
+						} else {
+							fLintRes = append(fLintRes, LinterResult{
+								Location:    Location{len("__author__") + 1, i + 1},
+								EndLocation: Location{len(ln), i + 1},
+								Message:     "invalid __author__ line (expected format __author__ = \"0123456, Lastname\")",
+							})
+						}
+					}
+				}
+				if !hasAuthor {
+					fLintRes = append(fLintRes, LinterResult{
+						Location:    Location{1, 1},
+						EndLocation: Location{1, 1},
+						Message:     "missing __author__ line",
+					})
+				}
 			}
 
 			{
@@ -217,7 +265,11 @@ func main() {
 		}
 	}
 
-	http.Handle("/", templ.Handler(TplHtmlDoc(TplUploadForm(), title, nil)))
+	http.Handle("/", templ.Handler(TplHtmlDoc(
+		[]templ.Component{TplUploadForm(false)},
+		title,
+		nil,
+	)))
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 	http.Handle("/upload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") ||
@@ -247,19 +299,23 @@ func main() {
 			return
 		}
 
-		if len(lintRes) == 0 {
-			w.Header().Add("Content-Disposition", "attachment; filename="+sanitizeFilename(outFileName))
-			w.Header().Add("Content-Length", strconv.Itoa(bOut.Len()))
-			if _, err := w.Write(bOut.Bytes()); err != nil {
+		foundProblems := slices.ContainsFunc(slices.Collect(maps.Values(lintRes)), func(slc []LinterResult) bool {
+			return len(slc) > 0
+		})
+
+		if foundProblems {
+			if err := TplHtmlDoc(
+				[]templ.Component{TplUploadForm(true), TplLintResults(lintRes, foundProblems)},
+				title,
+				[]string{htmlCodeFormatterCSS.String()},
+			).Render(r.Context(), w); err != nil {
 				fmt.Println(err)
 				return
 			}
 		} else {
-			if err := TplHtmlDoc(
-				TplLintResults(lintRes),
-				title,
-				[]string{htmlCodeFormatterCSS.String()},
-			).Render(r.Context(), w); err != nil {
+			w.Header().Add("Content-Disposition", "attachment; filename="+sanitizeFilename(outFileName))
+			w.Header().Add("Content-Length", strconv.Itoa(bOut.Len()))
+			if _, err := w.Write(bOut.Bytes()); err != nil {
 				fmt.Println(err)
 				return
 			}

@@ -30,7 +30,7 @@ func sortedMapAll[Map ~map[K]V, K cmp.Ordered, V any](m Map) iter.Seq2[K, V] {
 	}
 }
 
-templ TplHtmlDoc(content templ.Component, title string, additionalCSS []string) {
+templ TplHtmlDoc(contents []templ.Component, title string, additionalCSS []string) {
 	<!DOCTYPE html>
 	<html lang="en">
 	<head>
@@ -41,7 +41,9 @@ templ TplHtmlDoc(content templ.Component, title string, additionalCSS []string) 
 		<link rel="stylesheet" href="/static/style.css">
 	</head>
 		<body>
-			@content
+			for _, cnt := range contents {
+				@cnt
+			}
 			<script src="https://unpkg.com/htmx.org@2.0.3"></script>
 			for _, css := range additionalCSS {
 				@templ.Raw("<style>"+css+"</style>")
@@ -50,29 +52,41 @@ templ TplHtmlDoc(content templ.Component, title string, additionalCSS []string) 
 	</html>
 }
 
-templ TplLintResults(lintResults map[string][]LinterResult) {
-	<ul>
-		for fName, lr := range sortedMapAll(lintResults) {
-			<li>
-				<p class="mono" style="margin: 5pt 0 5pt 0">{ fName }</p>
-				for _, r := range lr {
-					<details style="margin: 2pt 0 2pt 0">
-						<summary>
-							{ firstToUpper(r.Message) }
-							if r.Code != "" {
-								({ r.Code })
-							}
-							<span class="unemph">[{ fmt.Sprintf("Line %v, Col %v", r.Location.Row, r.Location.Column) }]</span><br>
-						</summary>
-						@templ.Raw(r.ContextCodeHTML)
-					</details>
+templ TplLintResults(lintResults map[string][]LinterResult, foundProblems bool) {
+	if foundProblems {
+		<h3>Detected Problems</h3>
+		<ul>
+			for fName, lr := range sortedMapAll(lintResults) {
+				if len(lr) > 0 {
+					<li>
+						<p class="mono" style="margin: 5pt 0 5pt 0">{ fName }</p>
+						for _, r := range lr {
+							<details style="margin: 2pt 0 2pt 0">
+								<summary>
+									{ firstToUpper(r.Message) }
+									if r.Code != "" {
+										({ r.Code })
+									}
+									<span class="unemph">[{ fmt.Sprintf("Line %v, Col %v", r.Location.Row, r.Location.Column) }]</span><br>
+								</summary>
+								@templ.Raw(r.ContextCodeHTML)
+							</details>
+						}
+					</li>
 				}
-			</li>
-		}
-	</ul>
+			}
+		</ul>
+	} else {
+		<h3>No Problems Detected :)</h3>
+	}
 }
 
-templ TplUploadForm() {
+templ TplUploadForm(msgNewFile bool) {
+	<h2>Upload
+	if msgNewFile {
+		New
+	}
+	File (.zip)</h2>
 	<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
 		<label for="upload-form-file">File:</label>
 		<input id="upload-form-file" type="file" name="file" accept=".zip"><br><br>
